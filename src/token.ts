@@ -1,53 +1,75 @@
 import {
-  Approval as ApprovalEvent,
-  ApprovalForAll as ApprovalForAllEvent,
-  OwnershipTransferred as OwnershipTransferredEvent,
-  Transfer as TransferEvent
-} from "../generated/Token/Token"
-import {
-  Approval,
-  ApprovalForAll,
-  OwnershipTransferred,
-  Transfer
-} from "../generated/schema"
+  Transfer as TransferEvent,
+  Token as TokenContract,
+} from "../generated/Token/Token";
 
-export function handleApproval(event: ApprovalEvent): void {
-  let entity = new Approval(
-    event.transaction.hash.toHex() + "-" + event.logIndex.toString()
-  )
-  entity.owner = event.params.owner
-  entity.approved = event.params.approved
-  entity.tokenId = event.params.tokenId
-  entity.save()
-}
+import { Token, User } from "../generated/schema";
 
-export function handleApprovalForAll(event: ApprovalForAllEvent): void {
-  let entity = new ApprovalForAll(
-    event.transaction.hash.toHex() + "-" + event.logIndex.toString()
-  )
-  entity.owner = event.params.owner
-  entity.operator = event.params.operator
-  entity.approved = event.params.approved
-  entity.save()
-}
+import { ipfs, json } from "@graphprotocol/graph-ts";
 
-export function handleOwnershipTransferred(
-  event: OwnershipTransferredEvent
-): void {
-  let entity = new OwnershipTransferred(
-    event.transaction.hash.toHex() + "-" + event.logIndex.toString()
-  )
-  entity.previousOwner = event.params.previousOwner
-  entity.newOwner = event.params.newOwner
-  entity.save()
-}
+const ipfshash = "QmaXzZhcYnsisuue5WRdQDH6FDvqkLQX1NckLqBYeYYEfm";
 
 export function handleTransfer(event: TransferEvent): void {
-  let entity = new Transfer(
-    event.transaction.hash.toHex() + "-" + event.logIndex.toString()
-  )
-  entity.from = event.params.from
-  entity.to = event.params.to
-  entity.tokenId = event.params.tokenId
-  entity.save()
+  let tokenId = event.params.tokenId.toString();
+  let token = Token.load(tokenId);
+  if (token == null) {
+    token = new Token(tokenId);
+    token.tokenID = event.params.tokenId;
+    token.tokenURI = "/" + tokenId + ".json";
+    let metadata = ipfs.cat(ipfshash + token.tokenURI);
+    if (metadata) {
+      const value = json.fromBytes(metadata).toObject();
+      if (value) {
+        const image = value.get("image");
+        const name = value.get("name");
+        const description = value.get("description");
+        const externalURL = value.get("external_url");
+        if (name && description && image && externalURL) {
+          token.name = name.toString();
+          token.description = description.toString();
+          token.image = image.toString();
+          token.externalURL = externalURL.toString();
+        }
+        const coven = value.get("coven");
+        if (coven) {
+          let covenData = coven.toObject();
+          const type = covenData.get("type");
+          if (type) {
+            token.type = type.toString();
+          }
+          const birthChart = covenData.get("birth_chart");
+          if (birthChart) {
+            const birthChartData = birthChart.toObject();
+            const sun = birthChartData.get("sun");
+            const moon = birthChartData.get("moon");
+            const rising = birthChartData.get("rising");
+            if (sun && moon && rising) {
+              token.sun = sun.toString();
+              token.moon = moon.toString();
+              token.rising = rising.toString();
+            }
+          }
+        }
+      }
+      token.updatedAtTimestamp = event.block.timestamp;
+      token.owner = event.params.to.toHexString();
+      token.save();
+
+      let user = User.load(token.owner);
+      if (user == null) {
+        user = new User(token.owner);
+        user.save();
+      }
+    } else {
+      token.owner = event.params.to.toHexString();
+      token.save();
+    }
+
+    let user = User.load(event.params.to.toHexString());
+    if (user == null) {
+      user = new User(event.params.to.toHexString());
+      user.id = event.params.to.toHexString();
+      user.save();
+    }
+  }
 }
